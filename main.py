@@ -1,8 +1,10 @@
-import asyncio
-import ggwave
-import pyaudio
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QTextEdit, QLineEdit, QLabel
+from PyQt5.QtGui import QColor
+import sys
 import threading
 import datetime
+import ggwave
+import pyaudio
 
 # Configuration
 PROTOCOL_ID = 4  # The ID for the ultrasound protocol
@@ -17,17 +19,13 @@ class SoundCommunication:
         with self.lock:
             # generate audio waveform for string message
             waveform = ggwave.encode(message, protocolId=PROTOCOL_ID, volume=VOLUME)
-
-            print(f"Transmitting text '{message}' ...")
             stream = self.p.open(format=pyaudio.paFloat32, channels=1, rate=48000, output=True, frames_per_buffer=4096)
             stream.write(waveform, len(waveform) // 4)
             stream.stop_stream()
             stream.close()
 
-    def receive(self):
+    def receive(self, textArea):
         stream = self.p.open(format=pyaudio.paFloat32, channels=1, rate=48000, input=True, frames_per_buffer=1024)
-
-        print('Listening ...')
         instance = ggwave.init()
 
         try:
@@ -38,29 +36,57 @@ class SoundCommunication:
                     if (not res is None):
                         try:
                             received_text = res.decode("utf-8")
-                            self.print_message(received_text)
-                        except:
-                            pass
+                            textArea.append(f"{datetime.datetime.now()} | Received text: {received_text}")
+                        except Exception as e:
+                            textArea.setTextColor(QColor(255, 165, 0))  # Set text color to orange
+                            textArea.append(f"{datetime.datetime.now()} | Error: {str(e)}")
+                            textArea.setTextColor(QColor(0, 0, 0))  # Reset text color to black
         except KeyboardInterrupt:
             pass
 
         ggwave.free(instance)
-
         stream.stop_stream()
         stream.close()
 
-    @staticmethod
-    def print_message(message):
-        print(f"{datetime.datetime.now()} | Received text: {message}")
+
+class MyApp(QWidget):
+    def __init__(self, soundComm):
+        super().__init__()
+
+        self.soundComm = soundComm
+
+        self.initUI()
+
+    def initUI(self):
+        vbox = QVBoxLayout()
+
+        self.textArea = QTextEdit()
+        self.textArea.setReadOnly(True)
+        vbox.addWidget(self.textArea)
+
+        self.inputLine = QLineEdit()
+        self.inputLine.returnPressed.connect(self.send_message)
+        vbox.addWidget(self.inputLine)
+
+        self.setLayout(vbox)
+
+        self.setWindowTitle('Sound Communication')
+        self.setGeometry(300, 300, 300, 200)
+        self.show()
+
+    def send_message(self):
+        message = self.inputLine.text()
+        self.soundComm.send(message)
+        self.textArea.append(f"{datetime.datetime.now()} | Sent text: {message}")
+        self.inputLine.clear()
 
 
 if __name__ == "__main__":
-    comms = SoundCommunication()
+    app = QApplication(sys.argv)
 
-    # Start the receiver in a separate thread
-    threading.Thread(target=comms.receive, daemon=True).start()
+    soundComm = SoundCommunication()
+    ex = MyApp(soundComm)
 
-    # CLI for the sender
-    while True:
-        message = input("Enter a message to send: ")
-        comms.send(message)
+    threading.Thread(target=soundComm.receive, args=(ex.textArea,), daemon=True).start()
+
+    sys.exit(app.exec_())
