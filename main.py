@@ -7,13 +7,15 @@ import ggwave
 import pyaudio
 
 # Configuration
-PROTOCOL_ID = 4  # The ID for the ultrasound protocol
+PROTOCOL_ID = 5  # The ID for the ultrasound protocol
 VOLUME = 100  # The volume of the output sound
 
 class SoundCommunication:
     def __init__(self):
         self.p = pyaudio.PyAudio()
         self.lock = threading.Lock()
+        self.last_sent_message = None
+        self.last_sent_time = None
 
     def send(self, message):
         with self.lock:
@@ -23,6 +25,8 @@ class SoundCommunication:
             stream.write(waveform, len(waveform) // 4)
             stream.stop_stream()
             stream.close()
+            self.last_sent_message = message
+            self.last_sent_time = datetime.datetime.now()
 
     def receive(self, textArea):
         stream = self.p.open(format=pyaudio.paFloat32, channels=1, rate=48000, input=True, frames_per_buffer=1024)
@@ -36,6 +40,9 @@ class SoundCommunication:
                     if (not res is None):
                         try:
                             received_text = res.decode("utf-8")
+                            if (received_text == self.last_sent_message and
+                                (datetime.datetime.now() - self.last_sent_time).total_seconds() < 1):
+                                continue
                             textArea.append(f"{datetime.datetime.now()} | Received text: {received_text}")
                         except Exception as e:
                             textArea.setTextColor(QColor(255, 165, 0))  # Set text color to orange
@@ -47,7 +54,6 @@ class SoundCommunication:
         ggwave.free(instance)
         stream.stop_stream()
         stream.close()
-
 
 class MyApp(QWidget):
     def __init__(self, soundComm):
@@ -65,8 +71,12 @@ class MyApp(QWidget):
         vbox.addWidget(self.textArea)
 
         self.inputLine = QLineEdit()
-        self.inputLine.returnPressed.connect(self.send_message)
+        self.inputLine.returnPressed.connect(self.send_message)  # Connect the returnPressed signal to the send_message function
         vbox.addWidget(self.inputLine)
+
+        self.sendButton = QPushButton("Send")
+        self.sendButton.clicked.connect(self.send_message)
+        vbox.addWidget(self.sendButton)
 
         self.setLayout(vbox)
 
@@ -76,7 +86,7 @@ class MyApp(QWidget):
 
     def send_message(self):
         message = self.inputLine.text()
-        self.soundComm.send(message)
+        threading.Thread(target=self.soundComm.send, args=(message,), daemon=True).start()  # Run the send method in a separate thread
         self.textArea.append(f"{datetime.datetime.now()} | Sent text: {message}")
         self.inputLine.clear()
 
